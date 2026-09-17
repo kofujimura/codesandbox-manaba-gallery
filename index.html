@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>作品ギャラリー</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="icon" href="favicon.png" sizes="32x32" type="image/png">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  :root {
+    --bg: #f4f4f6; --panel: #fff; --text: #222; --muted: #777; --line: #ddd;
+    --accent: #2563eb; --danger: #c0392b; --warn-bg: #fff6d6;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; background: var(--bg); color: var(--text); }
+  header {
+    position: sticky; top: 0; z-index: 10; background: var(--panel); border-bottom: 1px solid var(--line);
+    padding: 10px 16px; display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center;
+  }
+  header h1 { font-size: 18px; margin: 0; }
+  .ctrl { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+  .ctrl select, .ctrl input[type=number] { font-size: 14px; padding: 4px 6px; }
+  .switch { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
+  .switch button { border: 0; background: transparent; padding: 6px 14px; font-size: 14px; cursor: pointer; }
+  .switch button.on { background: var(--accent); color: #fff; }
+  .mode-grade .switch button.on { background: var(--danger); }
+  .badge { font-size: 12px; color: var(--muted); }
+  button.small { font-size: 13px; padding: 4px 10px; cursor: pointer; }
+
+  #drop {
+    margin: 40px auto; max-width: 640px; padding: 48px 24px; text-align: center;
+    border: 2px dashed #aaa; border-radius: 12px; background: var(--panel); cursor: pointer;
+  }
+  #drop.over { border-color: var(--accent); background: #eef3ff; }
+  #drop p { margin: 8px 0; color: var(--muted); }
+  #drop input { display: none; }
+
+  main { padding: 16px; }
+  .grid { display: grid; gap: 16px; grid-template-columns: repeat(var(--cols, 3), minmax(0, 1fr)); }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; display: flex; flex-direction: column; }
+  .card .top { display: flex; align-items: center; gap: 8px; padding: 8px 10px; font-size: 14px; border-bottom: 1px solid var(--line); }
+  .card .num { font-weight: bold; color: var(--accent); min-width: 2.5em; }
+  .card .who { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .card .top a { color: var(--muted); text-decoration: none; font-size: 12px; }
+  .card .top a:hover { text-decoration: underline; }
+  .card iframe { width: 100%; height: var(--h, 360px); border: 0; background: #fff; display: block; }
+  .card .none { height: var(--h, 360px); display: flex; align-items: center; justify-content: center; color: var(--muted); background: #fafafa; }
+  .card .note { font-size: 12px; padding: 8px 10px; background: var(--warn-bg); border-top: 1px solid #f0e0a0; white-space: pre-wrap; word-break: break-all; }
+  .card .meta { font-size: 12px; color: var(--muted); padding: 6px 10px; border-top: 1px solid var(--line); word-break: break-all; }
+  .mode-class .grade-only { display: none !important; }
+  .mode-class .card.nourl { display: none; }
+
+  /* 拡大表示 */
+  #viewer { position: fixed; inset: 0; background: #111; z-index: 100; display: none; flex-direction: column; }
+  #viewer.show { display: flex; }
+  #viewer .bar { display: flex; align-items: center; gap: 12px; padding: 8px 14px; background: #222; color: #eee; font-size: 14px; }
+  #viewer .bar .who { flex: 1; }
+  #viewer .bar button { font-size: 14px; padding: 4px 12px; cursor: pointer; }
+  #viewer iframe { flex: 1; border: 0; background: #fff; }
+</style>
+</head>
+<body class="mode-class">
+<header>
+  <h1>作品ギャラリー</h1>
+  <div class="ctrl">
+    <span class="switch" id="modeSwitch">
+      <button data-mode="class" class="on">授業モード</button>
+      <button data-mode="grade">採点モード</button>
+    </span>
+  </div>
+  <div class="ctrl">列数
+    <select id="cols"><option>1</option><option>2</option><option selected>3</option><option>4</option></select>
+  </div>
+  <div class="ctrl">高さ
+    <input id="height" type="number" value="360" min="150" step="30" style="width:5em"> px
+  </div>
+  <div class="ctrl"><span class="badge" id="info"></span></div>
+  <div class="ctrl"><button class="small" id="reset">別のファイルを読み込む</button></div>
+</header>
+
+<div id="drop">
+  <strong>manaba のレポート Excel (report-…xlsx) をここにドロップ</strong>
+  <p>またはクリックしてファイルを選択</p>
+  <p>ファイルはブラウザ内だけで処理され、どこにも送信されません。</p>
+  <input type="file" id="file" accept=".xlsx,.xls">
+</div>
+
+<main><div class="grid" id="grid"></div></main>
+
+<div id="viewer">
+  <div class="bar">
+    <button id="vPrev">← 前</button>
+    <span class="num" id="vNum"></span>
+    <span class="who" id="vWho"></span>
+    <a id="vLink" target="_blank" style="color:#9cf"></a>
+    <button id="vNext">次 →</button>
+    <button id="vClose">閉じる</button>
+  </div>
+  <iframe id="vFrame" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"></iframe>
+</div>
+
+<script>
+// ---------- URL 抽出 ----------
+function extractPreviewUrl(text) {
+  if (!text) return null;
+  text = String(text).replace(/_x000D_/g, '').replace(/\r/g, '\n');
+  const urls = text.match(/https?:\/\/[^\s'"<>「」『』（）()、。]+/g) || [];
+  for (let u of urls) {
+    // プレビュー URL (xxxxxx.csb.app/...)
+    let m = u.match(/^https?:\/\/([a-z0-9]+)\.csb\.app(\/[^\s?#]*)?/i);
+    if (m) return 'https://' + m[1].toLowerCase() + '.csb.app' + (m[2] || '/');
+    // エディター URL (codesandbox.io/p/sandbox/xxx-xxx-<id>, codesandbox.io/s/<id> など)
+    m = u.match(/^https?:\/\/(?:www\.)?codesandbox\.io\/([^?#]*)/i);
+    if (m) {
+      const segs = m[1].split('/').filter(Boolean);
+      const last = segs[segs.length - 1] || '';
+      const id = last.split('-').pop();
+      if (id) return 'https://' + id.toLowerCase() + '.csb.app/';
+    }
+  }
+  return null;
+}
+function editorUrl(preview) {
+  const m = preview && preview.match(/^https:\/\/([a-z0-9]+)\.csb\.app/);
+  return m ? 'https://codesandbox.io/p/sandbox/' + m[1] : null;
+}
+function cleanNote(text, url) {
+  if (!text) return '';
+  let t = String(text).replace(/_x000D_/g, '').replace(/\r/g, '');
+  t = t.replace(/https?:\/\/[^\s'"<>「」『』（）()、。]+/g, '').trim();
+  return t;
+}
+
+// ---------- Excel 読み込み ----------
+let students = [];
+const $ = s => document.querySelector(s);
+
+function parseWorkbook(buf) {
+  const wb = XLSX.read(buf, { type: 'array' });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false });
+  const out = [];
+  for (let r = 7; r < rows.length; r++) {      // 8行目以降 (0-based 7)
+    const row = rows[r];
+    if (!row || !row.some(v => String(v).trim() !== '')) continue;
+    if (String(row[0]).startsWith('#end')) break;
+    const role = String(row[3] || '').trim();       // D ロール
+    if (role && role !== '履修生') continue;         // 担当教員などは除外
+    const numid = String(row[5] || '').trim();   // F 学籍番号
+    const name  = String(row[6] || '').trim();   // G 氏名
+    if (!numid && !name) continue;
+    const text  = row[15] || '';                 // P テキスト
+    const url   = extractPreviewUrl(text);
+    out.push({
+      numid, name,
+      submitted: String(row[12] || ''),          // M 提出
+      date: String(row[13] || ''),               // N 提出日時
+      text, url, note: cleanNote(text, url),
+    });
+  }
+  return out;
+}
+
+function loadFile(file) {
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      students = parseWorkbook(new Uint8Array(e.target.result));
+      try { localStorage.setItem('gallery', JSON.stringify(students)); } catch (_) {}
+      render();
+    } catch (err) {
+      alert('読み込みに失敗しました: ' + err.message);
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+// ---------- 描画 ----------
+function render() {
+  const grid = $('#grid');
+  grid.innerHTML = '';
+  const withUrl = students.filter(s => s.url);
+  $('#info').textContent = `${students.length}名中 ${withUrl.length}件の作品`;
+  $('#drop').style.display = students.length ? 'none' : '';
+  let n = 0;
+  students.forEach((s, i) => {
+    const card = document.createElement('div');
+    card.className = 'card' + (s.url ? '' : ' nourl');
+    if (s.url) n++;
+    card.innerHTML = `
+      <div class="top">
+        <span class="num">${s.url ? '#' + n : '—'}</span>
+        <span class="who grade-only">${esc(s.name)}（${esc(s.numid)}）</span>
+        <span class="who class-only"></span>
+        ${s.url ? `<a href="${s.url}" target="_blank">別タブ</a>
+                   <a href="${editorUrl(s.url)}" target="_blank" class="grade-only">エディター</a>
+                   <a href="#" data-i="${i}" class="zoom">拡大</a>` : ''}
+      </div>
+      ${s.url
+        ? `<iframe src="${s.url}" loading="lazy" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"></iframe>`
+        : `<div class="none">${s.submitted === '提出済' ? 'URL が見つかりません' : '未提出'}</div>`}
+      ${s.note ? `<div class="note grade-only">${esc(s.note)}</div>` : ''}
+      <div class="meta grade-only">${esc(s.date)}　${esc(s.url || String(s.text).replace(/_x000D_/g, ' '))}</div>
+    `;
+    grid.appendChild(card);
+  });
+}
+function esc(s) { return String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
+
+// ---------- 拡大表示 ----------
+let cur = -1;
+function openViewer(i) {
+  const list = students.map((s, idx) => s.url ? idx : -1).filter(x => x >= 0);
+  if (!list.length) return;
+  if (!list.includes(i)) i = list[0];
+  cur = i;
+  const s = students[i];
+  const grade = document.body.classList.contains('mode-grade');
+  $('#vNum').textContent = '#' + (list.indexOf(i) + 1) + ' / ' + list.length;
+  $('#vWho').textContent = grade ? `${s.name}（${s.numid}）` : '';
+  $('#vLink').textContent = s.url; $('#vLink').href = s.url;
+  $('#vFrame').src = s.url;
+  $('#viewer').classList.add('show');
+}
+function stepViewer(d) {
+  const list = students.map((s, idx) => s.url ? idx : -1).filter(x => x >= 0);
+  const k = list.indexOf(cur);
+  if (k < 0) return;
+  openViewer(list[(k + d + list.length) % list.length]);
+}
+function closeViewer() { $('#viewer').classList.remove('show'); $('#vFrame').src = 'about:blank'; }
+
+// ---------- イベント ----------
+$('#grid').addEventListener('click', e => {
+  const a = e.target.closest('a.zoom');
+  if (a) { e.preventDefault(); openViewer(+a.dataset.i); }
+});
+$('#vPrev').onclick = () => stepViewer(-1);
+$('#vNext').onclick = () => stepViewer(1);
+$('#vClose').onclick = closeViewer;
+document.addEventListener('keydown', e => {
+  if (!$('#viewer').classList.contains('show')) return;
+  if (e.key === 'ArrowRight') stepViewer(1);
+  if (e.key === 'ArrowLeft') stepViewer(-1);
+  if (e.key === 'Escape') closeViewer();
+});
+
+$('#modeSwitch').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  document.querySelectorAll('#modeSwitch button').forEach(x => x.classList.toggle('on', x === b));
+  document.body.className = 'mode-' + b.dataset.mode;
+  if (cur >= 0 && $('#viewer').classList.contains('show')) openViewer(cur);
+});
+$('#cols').onchange = e => document.documentElement.style.setProperty('--cols', e.target.value);
+$('#height').oninput = e => document.documentElement.style.setProperty('--h', e.target.value + 'px');
+$('#reset').onclick = () => { students = []; localStorage.removeItem('gallery'); render(); };
+
+const drop = $('#drop');
+drop.onclick = () => $('#file').click();
+$('#file').onchange = e => e.target.files[0] && loadFile(e.target.files[0]);
+drop.ondragover = e => { e.preventDefault(); drop.classList.add('over'); };
+drop.ondragleave = () => drop.classList.remove('over');
+drop.ondrop = e => { e.preventDefault(); drop.classList.remove('over'); e.dataTransfer.files[0] && loadFile(e.dataTransfer.files[0]); };
+
+// 前回読み込んだデータを復元
+try {
+  const saved = localStorage.getItem('gallery');
+  if (saved) { students = JSON.parse(saved); }
+} catch (_) {}
+render();
+</script>
+</body>
+</html>
