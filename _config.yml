@@ -1,0 +1,3 @@
+# GitHub Pages では Vercel 用のファイルを公開しない
+exclude:
+  - vercel

@@ -58,6 +58,17 @@
   #viewer .bar .who { flex: 1; }
   #viewer .bar button { font-size: 14px; padding: 4px 12px; cursor: pointer; }
   #viewer iframe { flex: 1; border: 0; background: #fff; }
+
+  /* 学生閲覧用に転送 */
+  #pub { border: 1px solid var(--line); border-radius: 10px; padding: 20px; width: min(520px, calc(100vw - 32px)); }
+  #pub h2 { font-size: 16px; margin: 0 0 12px; }
+  #pub label { display: block; font-size: 13px; margin: 10px 0 4px; }
+  #pub input[type=text], #pub input[type=password], #pub input[type=url] { width: 100%; font-size: 14px; padding: 6px 8px; }
+  #pub .hint { font-size: 12px; color: var(--muted); margin: 10px 0; }
+  #pub .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; flex-wrap: wrap; }
+  #pub .row button { font-size: 14px; padding: 6px 14px; cursor: pointer; }
+  #pubResult { margin-top: 12px; font-size: 13px; word-break: break-all; }
+  #pubResult a { color: var(--accent); }
 </style>
 </head>
 <body class="mode-class">
@@ -76,6 +87,7 @@
     <input id="height" type="number" value="360" min="150" step="30" style="width:5em"> px
   </div>
   <div class="ctrl"><span class="badge" id="info"></span></div>
+  <div class="ctrl"><button class="small" id="publish">学生閲覧用に転送</button></div>
   <div class="ctrl"><button class="small" id="reset">別のファイルを読み込む</button></div>
 </header>
 
@@ -99,6 +111,20 @@
   </div>
   <iframe id="vFrame" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"></iframe>
 </div>
+
+<dialog id="pub">
+  <h2>学生閲覧用サイトに転送</h2>
+  <label>タイトル（学生ページに表示）<input type="text" id="pubTitle"></label>
+  <label>転送先 (Vercel の URL)<input type="url" id="pubEndpoint" placeholder="https://xxxx.vercel.app"></label>
+  <label>管理用トークン<input type="password" id="pubToken" autocomplete="off"></label>
+  <p class="hint" id="pubHint"></p>
+  <div id="pubResult"></div>
+  <div class="row">
+    <button id="pubDelete" style="margin-right:auto">公開停止</button>
+    <button id="pubClose">閉じる</button>
+    <button id="pubSend">転送する</button>
+  </div>
+</dialog>
 
 <script>
 // ---------- URL 抽出 ----------
@@ -134,6 +160,7 @@ function cleanNote(text, url) {
 
 // ---------- Excel 読み込み ----------
 let students = [];
+let galleryName = '';
 const $ = s => document.querySelector(s);
 
 function parseWorkbook(buf) {
@@ -167,7 +194,11 @@ function loadFile(file) {
   reader.onload = e => {
     try {
       students = parseWorkbook(new Uint8Array(e.target.result));
-      try { localStorage.setItem('gallery', JSON.stringify(students)); } catch (_) {}
+      galleryName = file.name.replace(/\.[^.]+$/, '');
+      try {
+        localStorage.setItem('gallery', JSON.stringify(students));
+        localStorage.setItem('galleryName', galleryName);
+      } catch (_) {}
       render();
     } catch (err) {
       alert('読み込みに失敗しました: ' + err.message);
@@ -183,6 +214,7 @@ function render() {
   const withUrl = students.filter(s => s.url);
   $('#info').textContent = `${students.length}名中 ${withUrl.length}件の作品`;
   $('#drop').style.display = students.length ? 'none' : '';
+  $('#publish').disabled = !withUrl.length;
   let n = 0;
   students.forEach((s, i) => {
     const card = document.createElement('div');
@@ -254,7 +286,85 @@ $('#modeSwitch').addEventListener('click', e => {
 });
 $('#cols').onchange = e => document.documentElement.style.setProperty('--cols', e.target.value);
 $('#height').oninput = e => document.documentElement.style.setProperty('--h', e.target.value + 'px');
-$('#reset').onclick = () => { students = []; localStorage.removeItem('gallery'); render(); };
+$('#reset').onclick = () => { students = []; localStorage.removeItem('gallery'); localStorage.removeItem('galleryName'); render(); };
+
+// ---------- 学生閲覧用に転送 ----------
+// 送信するのは CodeSandbox のプレビュー URL の配列とタイトルのみ（氏名・学籍番号などは送らない）
+// 転送先・トークン・タイトルごとの公開 ID はこのブラウザの localStorage に保存
+const pubStore = {
+  get(k, d) { try { return JSON.parse(localStorage.getItem('pub.' + k)) ?? d; } catch (_) { return d; } },
+  set(k, v) { try { localStorage.setItem('pub.' + k, JSON.stringify(v)); } catch (_) {} },
+};
+const pubIds = () => pubStore.get('ids', {});           // { タイトル: 公開 ID }
+const pubApi = () => $('#pubEndpoint').value.trim().replace(/\/+$/, '');
+const studentUrl = id => pubApi() + '/g/' + id;
+
+function updatePubDialog() {
+  const id = pubIds()[$('#pubTitle').value.trim()];
+  $('#pubDelete').style.visibility = id ? 'visible' : 'hidden';
+  $('#pubSend').textContent = id ? '更新する' : '転送する';
+  $('#pubResult').innerHTML = id && pubApi()
+    ? `公開中: <a href="${esc(studentUrl(id))}" target="_blank">${esc(studentUrl(id))}</a>` : '';
+}
+$('#publish').onclick = () => {
+  const n = students.filter(s => s.url).length;
+  $('#pubTitle').value = galleryName || '作品ギャラリー';
+  $('#pubEndpoint').value = pubStore.get('endpoint', '');
+  $('#pubToken').value = pubStore.get('token', '');
+  $('#pubHint').textContent = `作品 ${n} 件の CodeSandbox URL のみを送信します（授業モードと同じ番号順）。氏名・学籍番号・提出日時・メモは送信されません。`;
+  updatePubDialog();
+  $('#pub').showModal();
+};
+$('#pubTitle').oninput = $('#pubEndpoint').oninput = updatePubDialog;
+$('#pubClose').onclick = () => $('#pub').close();
+
+async function pubRequest(method, query, body) {
+  const endpoint = pubApi(), token = $('#pubToken').value.trim();
+  if (!/^https:\/\//.test(endpoint) || !token) throw new Error('転送先 URL とトークンを入力してください');
+  pubStore.set('endpoint', endpoint);
+  pubStore.set('token', token);
+  const res = await fetch(endpoint + '/api/galleries' + query, {
+    method,
+    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+    body: body && JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401) throw new Error('トークンが正しくありません');
+  if (!res.ok) throw new Error(data.error || 'HTTP ' + res.status);
+  return data;
+}
+$('#pubSend').onclick = async () => {
+  const title = $('#pubTitle').value.trim() || '作品ギャラリー';
+  const ids = pubIds();
+  $('#pubSend').disabled = true;
+  try {
+    const data = await pubRequest('POST', '', { id: ids[title], title, urls: students.filter(s => s.url).map(s => s.url) });
+    ids[title] = data.id;
+    pubStore.set('ids', ids);
+    updatePubDialog();
+    $('#pubResult').innerHTML = `${data.count} 件を転送しました: <a href="${esc(studentUrl(data.id))}" target="_blank">${esc(studentUrl(data.id))}</a>
+      <button class="small" id="pubCopy">リンクをコピー</button>`;
+    $('#pubCopy').onclick = () => navigator.clipboard.writeText(studentUrl(data.id));
+  } catch (err) {
+    $('#pubResult').textContent = '転送に失敗しました: ' + err.message;
+  } finally {
+    $('#pubSend').disabled = false;
+  }
+};
+$('#pubDelete').onclick = async () => {
+  const title = $('#pubTitle').value.trim();
+  const ids = pubIds();
+  if (!ids[title]) return;
+  try {
+    await pubRequest('DELETE', '?id=' + ids[title]);
+    delete ids[title];
+    pubStore.set('ids', ids);
+    updatePubDialog();
+    $('#pubResult').textContent = '公開を停止しました';
+  } catch (err) {
+    $('#pubResult').textContent = '公開停止に失敗しました: ' + err.message;
+  }
+};
 
 const drop = $('#drop');
 drop.onclick = () => $('#file').click();
@@ -267,6 +377,7 @@ drop.ondrop = e => { e.preventDefault(); drop.classList.remove('over'); e.dataTr
 try {
   const saved = localStorage.getItem('gallery');
   if (saved) { students = JSON.parse(saved); }
+  galleryName = localStorage.getItem('galleryName') || '';
 } catch (_) {}
 render();
 </script>
