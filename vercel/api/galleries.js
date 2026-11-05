@@ -55,20 +55,30 @@ function newId() {
   return Array.from(randomBytes(12), x => chars[x % chars.length]).join('');
 }
 
+// 例外時も CORS ヘッダー付きの JSON を返す（ブラウザ側で原因が分かるように）
+const safe = fn => async request => {
+  try {
+    return await fn(request);
+  } catch (err) {
+    console.error(err);
+    return json(request, 500, { error: err.message || String(err) });
+  }
+};
+
 export function OPTIONS(request) {
   return new Response(null, { status: 204, headers: cors(request) });
 }
 
-export async function GET(request) {
+export const GET = safe(async request => {
   const id = new URL(request.url).searchParams.get('id') || '';
   if (!ID_RE.test(id)) return json(request, 400, { error: 'invalid id' });
   const res = await get(blobPath(id), { access: 'private', useCache: false });
   if (!res || res.statusCode !== 200) return json(request, 404, { error: 'not found' });
   const data = JSON.parse(await new Response(res.stream).text());
   return json(request, 200, data, { 'Cache-Control': 'public, max-age=0, s-maxage=30' });
-}
+});
 
-export async function POST(request) {
+export const POST = safe(async request => {
   if (!authorized(request)) return json(request, 401, { error: 'unauthorized' });
   let body;
   try { body = await request.json(); } catch { return json(request, 400, { error: 'invalid json' }); }
@@ -90,12 +100,12 @@ export async function POST(request) {
     cacheControlMaxAge: 60,
   });
   return json(request, 200, { id, count: urls.length });
-}
+});
 
-export async function DELETE(request) {
+export const DELETE = safe(async request => {
   if (!authorized(request)) return json(request, 401, { error: 'unauthorized' });
   const id = new URL(request.url).searchParams.get('id') || '';
   if (!ID_RE.test(id)) return json(request, 400, { error: 'invalid id' });
   await del(blobPath(id));
   return json(request, 200, { ok: true });
-}
+});
